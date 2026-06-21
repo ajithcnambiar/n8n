@@ -41,6 +41,18 @@ export function applyLargeNumbersReceive(e: {
 	}
 }
 
+// Build the pg-promise `receive` handler at module scope so the closure only
+// captures the `largeNumbersOutput` flag, not the calling node's execution
+// context. The pool is registered in pg-promise's process-global registry, so a
+// handler that closed over the execution context would keep that context (and
+// everything it references) alive for the lifetime of the pool.
+function createReceiveHandler(largeNumbersOutput: PostgresNodeOptions['largeNumbersOutput']) {
+	return (e: unknown) => {
+		if (largeNumbersOutput !== 'numbers') return;
+		applyLargeNumbersReceive(e as Parameters<typeof applyLargeNumbersReceive>[0]);
+	};
+}
+
 const getPostgresConfig = (
 	credentials: PostgresNodeCredentials,
 	options: PostgresNodeOptions = {},
@@ -113,10 +125,7 @@ export async function configurePostgres(
 			noWarnings: true,
 			// Use per-instance receive event instead of pgp.pg.types.setTypeParser, which mutates
 			// global pg state and would affect all pools regardless of their largeNumbersOutput setting
-			receive(e) {
-				if (options.largeNumbersOutput !== 'numbers') return;
-				applyLargeNumbersReceive(e as Parameters<typeof applyLargeNumbersReceive>[0]);
-			},
+			receive: createReceiveHandler(options.largeNumbersOutput),
 		});
 
 		if (typeof options.nodeVersion === 'number' && options.nodeVersion >= 2.1) {
